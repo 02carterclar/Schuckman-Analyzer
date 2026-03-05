@@ -1349,20 +1349,19 @@ Confidence definitions:
                         fontSize: 11, cursor: "pointer", textDecoration: "none" }}>
                       🏛 NYC DOB →
                     </a>
-                   href={`https://therealdeal.com/search/?q=${encodeURIComponent(txn.addr.split(",")[0])}+${encodeURIComponent(txn.borough)}`}
+                  href={"https://yimby.com/?s=" + encodeURIComponent(txn.addr.split(",")[0])}
                       target="_blank" rel="noopener noreferrer"
                       style={{ background: "none", border: `1px solid #DDD`,
                         color: GRAY, padding: "5px 14px", borderRadius: 4,
                         fontSize: 11, cursor: "pointer", textDecoration: "none" }}>
                       🏗 YIMBY →
                     </a>
-                    <a href={`https://therealdeal.com/search/?q=${encodeURIComponent(txn.addr.split(",")[0])}`}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{ background: "none", border: `1px solid #DDD`,
-                        color: GRAY, padding: "5px 14px", borderRadius: 4,
-                        fontSize: 11, cursor: "pointer", textDecoration: "none" }}>
-                      📰 TRD →
-                    </a>
+                  <a href={"https://therealdeal.com/search/?q=" + encodeURIComponent(txn.addr.split(",")[0]) + "+" + encodeURIComponent(txn.borough)}
+  target="_blank" rel="noopener noreferrer"
+  style={{ background:"none", border:"1px solid #DDD", color:GRAY,
+    padding:"5px 14px", borderRadius:4, fontSize:11, textDecoration:"none" }}>
+  📰 TRD →
+</a>
                   </div>
                 </div>
               )}
