@@ -202,15 +202,17 @@ function processSheets(workbook) {
   };
 
   // Derive period label from sheet names
-  const first = sheetDates[0] || "";
-  const last = sheetDates[sheetDates.length - 1] || "";
+const monthCounts = {};
+  for (const name of sheetDates) {
+    const m = name.trim().match(/^(\d+)\./);
+    if (m) monthCounts[m[1]] = (monthCounts[m[1]] || 0) + 1;
+  }
+  const dominantMonth = Object.entries(monthCounts).sort((a,b) => b[1]-a[1])[0]?.[0] || "1";
   const monthMap = { "1":"January","2":"February","3":"March","4":"April","5":"May","6":"June",
     "7":"July","8":"August","9":"September","10":"October","11":"November","12":"December" };
-  let period = "Monthly Report";
-  const mm = first.match(/^(\d+)\./);
-  if (mm) period = `${monthMap[mm[1]] || mm[1]} Report`;
+  const last = sheetDates[sheetDates.length - 1] || "";
   const ymatch = last.match(/(\d{2})$/);
-  if (ymatch) period += ` 20${ymatch[1]}`;
+  const period = `${monthMap[dominantMonth]} ${ymatch ? "20"+ymatch[1] : ""} Report`.trim();
 
   return { txns, portfolios, deduped, totalVolume, median,
     count: deduped.length, byAsset, byBorough, topDeals,
