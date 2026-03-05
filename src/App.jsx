@@ -105,6 +105,86 @@ const fmt = (n) => {
   return `$${n?.toLocaleString()}`;
 };
 
+// ─── AI HELPER ──────────────────────────────────────────────────────────────
+const MODEL_MAP = {
+  haiku: "claude-haiku-4-5-20251001",
+  sonnet: "claude-sonnet-4-20250514",
+};
+
+async function callClaude({ model = "sonnet", messages, system, tools, maxTokens = 2048, betas }) {
+  const body = { model: MODEL_MAP[model] || model, max_tokens: maxTokens, messages };
+  if (system) body.system = system;
+  if (tools) body.tools = tools;
+  if (betas) body.betas = betas;
+
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const resp = await fetch("/api/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (resp.status === 429) {
+        const wait = Math.min(2000 * Math.pow(2, attempt), 15000);
+        await new Promise(r => setTimeout(r, wait));
+        lastErr = `Rate limited (429)`;
+        continue;
+      }
+      const json = await resp.json();
+      if (!resp.ok) {
+        return { ok: false, error: json.error?.message || json.message || `HTTP ${resp.status}`, status: resp.status };
+      }
+      let text = "";
+      for (const block of (json.content || [])) {
+        if (block.type === "text") text = block.text;
+      }
+      return { ok: true, text, raw: json };
+    } catch (err) {
+      lastErr = err.message;
+    }
+  }
+  return { ok: false, error: lastErr || "Request failed after retries" };
+}
+
+// ─── LOCALSTORAGE HELPERS ───────────────────────────────────────────────────
+function saveHistory(period, summary) {
+  try {
+    const key = `schuckman_history_${period.replace(/\s+/g, "_")}`;
+    localStorage.setItem(key, JSON.stringify({ ...summary, savedAt: Date.now() }));
+  } catch (_) {}
+}
+
+function loadAllHistory() {
+  const results = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("schuckman_history_")) {
+        const val = JSON.parse(localStorage.getItem(key));
+        if (val) results.push(val);
+      }
+    }
+  } catch (_) {}
+  return results.sort((a, b) => (a.savedAt || 0) - (b.savedAt || 0));
+}
+
+function getCachedEntity(name) {
+  try {
+    const key = `schuckman_entity_${name.toLowerCase().trim().replace(/[^a-z0-9]/g, "_")}`;
+    const val = JSON.parse(localStorage.getItem(key));
+    if (val && Date.now() - val.cachedAt < 7 * 24 * 60 * 60 * 1000) return val;
+  } catch (_) {}
+  return null;
+}
+
+function cacheEntity(name, data) {
+  try {
+    const key = `schuckman_entity_${name.toLowerCase().trim().replace(/[^a-z0-9]/g, "_")}`;
+    localStorage.setItem(key, JSON.stringify({ ...data, cachedAt: Date.now() }));
+  } catch (_) {}
+}
+
 function processSheets(workbook) {
   const XLSX = window._XLSX;
   let allRows = [];
@@ -324,6 +404,19 @@ export default function SchuckmanAnalyzer() {
       setData(result);
       setTab("instagram");
       setSlideIdx(0);
+      // Save summary to localStorage for trend analysis
+      saveHistory(result.period, {
+        period: result.period,
+        totalVolume: result.totalVolume,
+        count: result.count,
+        median: result.median,
+        byAsset: result.byAsset,
+        byBorough: result.byBorough,
+        devCount: result.devCount,
+        portfolioCount: result.portfolioCount,
+        bkNbds: result.bkNbds?.slice(0, 4),
+        qnsNbds: result.qnsNbds?.slice(0, 4),
+      });
     } catch (e) {
       alert("Error reading file: " + e.message);
     }
@@ -340,6 +433,7 @@ export default function SchuckmanAnalyzer() {
     { id: "article", label: "📰 Website Article" },
     { id: "team", label: "📊 Team Report" },
     { id: "devintel", label: "🔍 Dev Intelligence" },
+    { id: "entities", label: "🏢 Entity Intel" },
   ];
 
   return (
@@ -438,6 +532,7 @@ export default function SchuckmanAnalyzer() {
             {tab === "article" && <ArticleView data={data} />}
             {tab === "team" && <TeamView data={data} />}
             {tab === "devintel" && <DevIntelView data={data} />}
+            {tab === "entities" && <EntityIntelView data={data} />}
           </>
         )}
       </div>
@@ -449,6 +544,45 @@ export default function SchuckmanAnalyzer() {
 function InstagramView({ data, slideIdx, setSlideIdx }) {
   const { period, totalVolume, count, median, byAsset, byBorough, topDeals,
     devCount, portfolioCount, bkNbds, qnsNbds } = data;
+
+  const [captions, setCaptions] = useState([]);
+  const [captionsLoading, setCaptionsLoading] = useState(false);
+  const [captionCopied, setCaptionCopied] = useState(null);
+
+  const slideSummaries = [
+    `Slide 1 (Cover): ${period} NYC Investment Sales Market Report`,
+    `Slide 2 (Market Overview): Total volume ${fmt(totalVolume)}, ${count} transactions, median ${fmt(median)}, ${devCount} dev sites, ${portfolioCount} portfolios`,
+    `Slide 3 (Asset Class): ${byAsset.map(a => `${a.name}: ${a.count} deals/${fmt(a.volume)}`).join(", ")}`,
+    `Slide 4 (Boroughs): ${byBorough.map(b => `${b.name}: ${b.count} deals/${fmt(b.volume)}`).join(", ")}`,
+    `Slide 5 (Top Deals): ${topDeals.slice(0, 5).map((t, i) => `#${i+1} ${t.addr.split(",")[0]} ${fmt(t.displayPrice)}`).join(", ")}`,
+  ];
+
+  const generateCaptions = async () => {
+    setCaptionsLoading(true);
+    const result = await callClaude({
+      model: "haiku",
+      maxTokens: 1024,
+      system: "You write Instagram captions for a NYC commercial real estate brokerage (Schuckman Realty Inc). Professional but engaging. Always include relevant hashtags.",
+      messages: [{ role: "user", content: `Generate one Instagram caption for each slide of our ${period} market report carousel. Keep each caption to 1-2 sentences plus 5-8 hashtags. Format: one caption per line, numbered 1-${slideSummaries.length}.
+
+Slide data:
+${slideSummaries.map((s, i) => `${i + 1}. ${s}`).join("\n")}` }],
+    });
+    if (result.ok && result.text) {
+      const lines = result.text.split("\n").filter(l => l.trim());
+      const parsed = lines.map(l => l.replace(/^\d+[\.\)]\s*/, "").trim()).filter(Boolean);
+      setCaptions(parsed);
+    }
+    setCaptionsLoading(false);
+  };
+
+  const copyCaption = (idx) => {
+    if (captions[idx]) {
+      navigator.clipboard.writeText(captions[idx]);
+      setCaptionCopied(idx);
+      setTimeout(() => setCaptionCopied(null), 2000);
+    }
+  };
 
   const slides = [
     // 1 — Cover
@@ -651,6 +785,41 @@ function InstagramView({ data, slideIdx, setSlideIdx }) {
         <div style={{ textAlign: "center", marginTop: 16, fontSize: 12, color: GRAY }}>
           Slide {slideIdx + 1} of {slides.length} — Screenshot or right-click to save each slide
         </div>
+
+        {/* AI Captions */}
+        <div style={{ marginTop: 24, borderTop: "1px solid #E8E8E8", paddingTop: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+            marginBottom: 12 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: BK }}>AI Instagram Captions</div>
+              <div style={{ fontSize: 11, color: GRAY, marginTop: 2 }}>
+                Powered by Claude Haiku — one caption per slide
+              </div>
+            </div>
+            <button onClick={generateCaptions} disabled={captionsLoading}
+              style={{ background: captionsLoading ? GRAY : BK, color: WHITE, border: "none",
+                padding: "8px 20px", borderRadius: 6, fontSize: 12, fontWeight: 700,
+                cursor: captionsLoading ? "not-allowed" : "pointer" }}>
+              {captionsLoading ? "Generating…" : captions.length > 0 ? "Regenerate Captions" : "Generate Captions"}
+            </button>
+          </div>
+
+          {captions.length > 0 && captions[slideIdx] && (
+            <div style={{ background: "#FAFAFA", border: "1px solid #E8E8E8", borderRadius: 8,
+              padding: "14px 18px", display: "flex", justifyContent: "space-between",
+              alignItems: "flex-start", gap: 12 }}>
+              <div style={{ fontSize: 13, color: BK, lineHeight: 1.6, flex: 1 }}>
+                {captions[slideIdx]}
+              </div>
+              <button onClick={() => copyCaption(slideIdx)}
+                style={{ background: captionCopied === slideIdx ? "#22C55E" : R, color: WHITE,
+                  border: "none", padding: "6px 14px", borderRadius: 5, fontSize: 11,
+                  fontWeight: 700, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>
+                {captionCopied === slideIdx ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -664,6 +833,9 @@ function ArticleView({ data }) {
   const [generatedArticle, setGeneratedArticle] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState(null);
+  const [tone, setTone] = useState("Professional");
+  const [length, setLength] = useState("Standard");
+  const articleCache = useRef({});
 
   const topBorough = byBorough[0] || {};
   const topAsset = [...byAsset].sort((a, b) => b.volume - a.volume)[0] || {};
@@ -702,6 +874,11 @@ Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc.
   const articleText = generatedArticle ?? defaultArticleText;
 
   const generateWithClaude = async () => {
+    const cacheKey = `${period}_${tone}_${length}`;
+    if (articleCache.current[cacheKey]) {
+      setGeneratedArticle(articleCache.current[cacheKey]);
+      return;
+    }
     setGenerating(true);
     setGenerateError(null);
     const dataBlob = [
@@ -725,35 +902,50 @@ Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc.
       ...topDeals.slice(0, 5).map((t, i) => `  ${i + 1}. ${t.addr} — ${t.assetClass}${t.isPortfolio ? " (Portfolio)" : ""} — ${fmt(t.displayPrice)}`),
     ].join("\n");
 
-    const prompt = `Write a concise, data-forward NYC Investment Sales Market Report article. Use ONLY the data below. Do not invent any numbers or facts. The report is based only on transactions over $1 million. Source: PropertyShark. Exclude single-family and two-family residential sales; portfolio deals are deduplicated.
+    const toneGuide = {
+      Professional: "Write in a polished, authoritative tone suitable for a commercial real estate brokerage's website. Use precise language and industry terminology.",
+      Conversational: "Write in a conversational, accessible tone that a general audience can understand. Avoid excessive jargon. Be engaging and informative.",
+      "Data-Heavy": "Write in a highly analytical, numbers-forward style. Lead every paragraph with specific data points. Minimize narrative; maximize statistics and comparisons.",
+    };
+    const wordTarget = { Short: 200, Standard: 350, Detailed: 500 };
+    const target = wordTarget[length] || 350;
 
-Requirements: Keep the article concise (under 350 words). Lead with the key numbers (volume, transaction count, median). Include market overview, asset class and borough breakdown, top neighborhoods (Brooklyn/Queens), and top transactions. End with exactly: "Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc. Investment Sales Division". Output plain text only, no markdown.
+    const prompt = `You are a senior NYC commercial real estate market analyst writing for Schuckman Realty Inc.
+
+TONE: ${toneGuide[tone] || toneGuide.Professional}
+
+Write an NYC Investment Sales Market Report article using ONLY the data below. Do not invent any numbers or facts.
+
+Structure:
+1. Opening hook — lead with the most compelling headline number (total volume or a standout trend)
+2. Market Overview — volume, transaction count, median price, portfolio activity
+3. Asset Class Breakdown — what dominated and why it matters
+4. Borough Activity — which boroughs led and by how much
+5. Top Neighborhoods — Brooklyn and Queens highlights
+6. Notable Transactions — the biggest deals
+7. Forward-looking statement — one sentence on what this data suggests
+
+Rules:
+- Target ~${target} words
+- Use ONLY the data provided — never fabricate numbers
+- Report covers transactions $1M+ only; single/two-family excluded; portfolios deduplicated
+- Output plain text only, no markdown, no headers with # symbols
+- End with exactly: "Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc. Investment Sales Division"
 
 DATA:
 ${dataBlob}`;
 
     try {
-      const resp = await fetch("/api/research", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 2048,
-          messages: [{ role: "user", content: prompt }],
-        }),
+      const result = await callClaude({
+        model: "sonnet",
+        maxTokens: 2048,
+        messages: [{ role: "user", content: prompt }],
       });
-      const json = await resp.json();
-      if (!resp.ok) {
-        setGenerateError(json.error?.message || `HTTP ${resp.status}`);
-        setGenerating(false);
-        return;
-      }
-      let raw = "";
-      for (const block of (json.content || [])) {
-        if (block.type === "text") raw = block.text;
-      }
-      if (raw && raw.trim()) {
-        setGeneratedArticle(raw.trim());
+      if (!result.ok) {
+        setGenerateError(result.error);
+      } else if (result.text?.trim()) {
+        setGeneratedArticle(result.text.trim());
+        articleCache.current[cacheKey] = result.text.trim();
       } else {
         setGenerateError("No text in response.");
       }
@@ -780,6 +972,26 @@ ${dataBlob}`;
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 4, background: LGRAY, borderRadius: 6, padding: 3 }}>
+            {["Professional","Conversational","Data-Heavy"].map(t => (
+              <button key={t} onClick={() => setTone(t)}
+                style={{ padding: "5px 12px", borderRadius: 4, border: "none", cursor: "pointer",
+                  fontSize: 11, fontWeight: 600,
+                  background: tone === t ? BK : "transparent", color: tone === t ? WHITE : GRAY }}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 4, background: LGRAY, borderRadius: 6, padding: 3 }}>
+            {["Short","Standard","Detailed"].map(l => (
+              <button key={l} onClick={() => setLength(l)}
+                style={{ padding: "5px 12px", borderRadius: 4, border: "none", cursor: "pointer",
+                  fontSize: 11, fontWeight: 600,
+                  background: length === l ? BK : "transparent", color: length === l ? WHITE : GRAY }}>
+                {l}
+              </button>
+            ))}
+          </div>
           <button onClick={generateWithClaude} disabled={generating}
             style={{ background: generating ? GRAY : BK, color: WHITE, border: "none",
               padding: "10px 24px", borderRadius: 6, fontSize: 13, fontWeight: 700,
@@ -1106,6 +1318,164 @@ function TeamView({ data }) {
         buyer name + closing date — deduplicated and reported as single transactions with
         combined pricing. Development sites classified via V0/V1 building codes.
       </div>
+
+      {/* AI Trend Analysis */}
+      <TrendAnalysis data={data} />
+    </div>
+  );
+}
+
+// ─── TREND ANALYSIS ──────────────────────────────────────────────────────────
+function TrendAnalysis({ data }) {
+  const [trendText, setTrendText] = useState(null);
+  const [trendLoading, setTrendLoading] = useState(false);
+  const [trendError, setTrendError] = useState(null);
+  const [trendOpen, setTrendOpen] = useState(false);
+  const trendCache = useRef({});
+
+  const history = loadAllHistory();
+  const previous = history.filter(h => h.period !== data.period);
+
+  const generateTrend = async () => {
+    const cacheKey = data.period;
+    if (trendCache.current[cacheKey]) {
+      setTrendText(trendCache.current[cacheKey]);
+      return;
+    }
+    setTrendLoading(true);
+    setTrendError(null);
+
+    const currentSummary = `CURRENT PERIOD: ${data.period}
+Volume: ${fmt(data.totalVolume)}, Transactions: ${data.count}, Median: ${fmt(data.median)}, Dev sites: ${data.devCount}
+Boroughs: ${data.byBorough.map(b => `${b.name}: ${b.count} deals/${fmt(b.volume)}`).join(", ")}
+Asset classes: ${data.byAsset.map(a => `${a.name}: ${a.count}/${fmt(a.volume)}`).join(", ")}`;
+
+    const historySummaries = previous.map(h =>
+      `${h.period}: Vol ${fmt(h.totalVolume)}, ${h.count} txns, Median ${fmt(h.median)}, DevSites ${h.devCount}` +
+      (h.byBorough ? ` | Boroughs: ${h.byBorough.map(b => `${b.name}:${fmt(b.volume)}`).join(",")}` : "") +
+      (h.byAsset ? ` | Assets: ${h.byAsset.map(a => `${a.name}:${a.count}`).join(",")}` : "")
+    ).join("\n");
+
+    const prompt = `You are a senior NYC commercial real estate analyst at Schuckman Realty Inc. Analyze the current period's investment sales data${previous.length > 0 ? " and compare it to historical periods" : ""}.
+
+${currentSummary}
+
+${previous.length > 0 ? `HISTORICAL PERIODS:\n${historySummaries}` : "No historical data available — analyze the current period on its own."}
+
+Write a concise trend analysis (200-300 words) covering:
+${previous.length > 0 ? `1. Volume trend — is the market growing, declining, or stable vs previous periods?
+2. Asset class shifts — what's gaining/losing share?
+3. Borough momentum — which areas are heating up or cooling?
+4. Notable patterns — any standout changes worth highlighting?
+5. One forward-looking takeaway` : `1. Market size assessment — how does this volume and deal count compare to typical NYC investment sales activity?
+2. Asset class composition — what does the mix tell us about market dynamics?
+3. Borough concentration — where is activity concentrated and what does it suggest?
+4. One forward-looking takeaway`}
+
+Use specific numbers and percentages. Plain text, no markdown. Be analytical, not promotional.`;
+
+    try {
+      const result = await callClaude({
+        model: "sonnet",
+        maxTokens: 1500,
+        messages: [{ role: "user", content: prompt }],
+      });
+      if (!result.ok) {
+        setTrendError(result.error);
+      } else if (result.text?.trim()) {
+        setTrendText(result.text.trim());
+        trendCache.current[cacheKey] = result.text.trim();
+      } else {
+        setTrendError("No response text.");
+      }
+    } catch (err) {
+      setTrendError(err.message);
+    }
+    setTrendLoading(false);
+  };
+
+  return (
+    <div style={{ background: WHITE, borderRadius: 10, padding: 20, marginTop: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+        cursor: "pointer" }} onClick={() => setTrendOpen(!trendOpen)}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 14, color: BK }}>
+            AI Market Trend Analysis
+          </div>
+          <div style={{ fontSize: 11, color: GRAY, marginTop: 2 }}>
+            {previous.length > 0
+              ? `${previous.length} previous period${previous.length > 1 ? "s" : ""} available for comparison`
+              : "Upload reports from multiple months to unlock trend comparisons"}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {!trendText && (
+            <button onClick={(e) => { e.stopPropagation(); setTrendOpen(true); generateTrend(); }}
+              disabled={trendLoading}
+              style={{ background: trendLoading ? GRAY : BK, color: WHITE, border: "none",
+                padding: "8px 20px", borderRadius: 6, fontSize: 12, fontWeight: 700,
+                cursor: trendLoading ? "not-allowed" : "pointer" }}>
+              {trendLoading ? "Analyzing…" : "Generate Analysis"}
+            </button>
+          )}
+          <div style={{ color: GRAY, fontSize: 16, transform: trendOpen ? "rotate(90deg)" : "none",
+            transition: "transform 0.2s" }}>›</div>
+        </div>
+      </div>
+
+      {trendOpen && (
+        <div style={{ marginTop: 16 }}>
+          {trendError && (
+            <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8,
+              padding: "10px 14px", fontSize: 12, color: "#B91C1C", marginBottom: 12 }}>
+              {trendError}
+            </div>
+          )}
+          {trendText && (
+            <div style={{ background: "#FAFAFA", border: "1px solid #E8E8E8", borderRadius: 8,
+              padding: "20px 24px" }}>
+              <div style={{ fontSize: 13, color: BK, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                {trendText}
+              </div>
+              <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+                <button onClick={() => { navigator.clipboard.writeText(trendText); }}
+                  style={{ background: LGRAY, color: BK, border: "none", padding: "6px 14px",
+                    borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                  Copy Analysis
+                </button>
+                <button onClick={generateTrend} disabled={trendLoading}
+                  style={{ background: "none", border: "1px solid #DDD", color: GRAY,
+                    padding: "6px 14px", borderRadius: 5, fontSize: 11, cursor: "pointer" }}>
+                  Regenerate
+                </button>
+              </div>
+            </div>
+          )}
+          {trendLoading && !trendText && (
+            <div style={{ textAlign: "center", padding: 32, color: GRAY, fontSize: 13 }}>
+              Analyzing market trends…
+            </div>
+          )}
+
+          {/* Historical snapshots */}
+          {previous.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: GRAY, letterSpacing: "1.5px",
+                textTransform: "uppercase", marginBottom: 8 }}>Historical Data Points</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
+                {previous.map(h => (
+                  <div key={h.period} style={{ background: LGRAY, borderRadius: 6, padding: "10px 14px" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: BK }}>{h.period}</div>
+                    <div style={{ fontSize: 11, color: GRAY, marginTop: 2 }}>
+                      {fmt(h.totalVolume)} · {h.count} deals
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1194,58 +1564,42 @@ Confidence rules — be strict:
 - "Not Dev": You found no permits, no development news, and no developer profile for the buyer; or you found evidence it is a hold/rental/repositioning play. When in doubt after searching, prefer "Not Dev" over "Possible Dev".`;
 
     try {
-     const resp = await fetch("/api/research", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
-    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
-    messages: [{ role: "user", content: prompt }],
-  }),
-});
+      const result = await callClaude({
+        model: "sonnet",
+        maxTokens: 4096,
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
+        messages: [{ role: "user", content: prompt }],
+      });
 
-      const json = await resp.json();
-
-      // Surface API errors instead of defaulting to "Possible Dev"
-      if (!resp.ok) {
-        const msg = json.error?.message || json.message || `HTTP ${resp.status}`;
-        const hint = resp.status === 403
+      if (!result.ok) {
+        const hint = result.status === 403
           ? " Web search may need to be enabled for your API key in the Anthropic console."
-          : resp.status === 401
+          : result.status === 401
           ? " Check ANTHROPIC_API_KEY."
           : "";
         setResults(r => ({ ...r, [key]: { status: "done", confidence: "Error",
-          summary: "API error: " + msg + hint, signals: [], sources: [] } }));
+          summary: "API error: " + result.error + hint, signals: [], sources: [] } }));
         setQueue(q => q.filter(k => k !== key));
         return;
       }
 
-      // Extract the final text block (after tool use rounds)
-      let raw = "";
-      for (const block of (json.content || [])) {
-        if (block.type === "text") raw = block.text;
-      }
-
-      // Parse JSON from response
       let parsed = null;
       try {
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        const jsonMatch = result.text.match(/\{[\s\S]*\}/);
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
       } catch (_) {}
 
       if (parsed) {
-        // Normalize confidence to exact label (model might return slight variants)
         const conf = parsed.confidence && ["Confirmed Dev","Likely Dev","Possible Dev","Not Dev"].find(
           c => c.toLowerCase() === String(parsed.confidence).toLowerCase()
         );
         if (conf) parsed.confidence = conf;
         setResults(r => ({ ...r, [key]: { status: "done", ...parsed } }));
       } else {
-        const noText = !raw || raw.trim().length === 0;
+        const noText = !result.text || result.text.trim().length === 0;
         const summary = noText
           ? "No response text from Claude. Enable web search for your API key in Anthropic Console (Settings → Privacy), then re-research."
-          : raw.slice(0, 280) + " (JSON could not be parsed — re-research to get a classification.)";
+          : result.text.slice(0, 280) + " (JSON could not be parsed — re-research to get a classification.)";
         setResults(r => ({ ...r, [key]: { status: "done", confidence: "Possible Dev",
           summary, signals: [], sources: [] } }));
       }
@@ -1566,6 +1920,330 @@ Confidence rules — be strict:
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ─── ENTITY INTELLIGENCE VIEW ────────────────────────────────────────────────
+function EntityIntelView({ data }) {
+  const { deduped, txns } = data;
+  const [entityResults, setEntityResults] = useState(() => {
+    // Pre-populate from localStorage cache
+    const cached = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("schuckman_entity_")) {
+          const val = JSON.parse(localStorage.getItem(key));
+          if (val && Date.now() - val.cachedAt < 7 * 24 * 60 * 60 * 1000) {
+            cached[val.entityName] = val;
+          }
+        }
+      }
+    } catch (_) {}
+    return cached;
+  });
+  const [loadingEntity, setLoadingEntity] = useState(null);
+  const [expandedEntity, setExpandedEntity] = useState(null);
+  const [entityFilter, setEntityFilter] = useState("buyers");
+
+  // Build entity list from transactions
+  const buildEntities = (type) => {
+    const map = {};
+    const source = txns || deduped;
+    for (const t of source) {
+      const name = type === "buyers" ? t.buyer : t.seller;
+      if (!name || name.trim().length < 2) continue;
+      const key = name.trim();
+      if (!map[key]) map[key] = { name: key, deals: 0, volume: 0, boroughs: new Set(), assetClasses: new Set() };
+      map[key].deals++;
+      map[key].volume += t.price;
+      if (t.borough) map[key].boroughs.add(t.borough);
+      if (t.assetClass) map[key].assetClasses.add(t.assetClass);
+    }
+    return Object.values(map)
+      .map(e => ({ ...e, boroughs: [...e.boroughs], assetClasses: [...e.assetClasses] }))
+      .sort((a, b) => b.volume - a.volume);
+  };
+
+  const entities = buildEntities(entityFilter);
+
+  const researchEntity = async (entity) => {
+    const cached = getCachedEntity(entity.name);
+    if (cached) {
+      setEntityResults(r => ({ ...r, [entity.name]: cached }));
+      return;
+    }
+    setLoadingEntity(entity.name);
+
+    const result = await callClaude({
+      model: "sonnet",
+      maxTokens: 2048,
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
+      messages: [{ role: "user", content: `You are a NYC commercial real estate analyst. Research this ${entityFilter === "buyers" ? "buyer" : "seller"} entity.
+
+Entity: "${entity.name}"
+Context: ${entity.deals} deal(s) totaling ${fmt(entity.volume)} in this period
+Boroughs: ${entity.boroughs.join(", ")}
+Asset classes: ${entity.assetClasses.join(", ")}
+
+Perform 2-3 web searches to find:
+1. What type of entity is this? (developer, investor, REIT, fund, individual, LLC, etc.)
+2. Any known portfolio, recent deals, or development activity
+3. Key principals or parent company
+4. Investment strategy or focus areas
+
+After searching, return ONLY this JSON:
+{
+  "entityType": "Developer" | "Investor" | "Fund/REIT" | "Individual" | "LLC/Unknown",
+  "description": "2-3 sentence description of what you found",
+  "knownDeals": ["deal 1", "deal 2"],
+  "strategy": "brief investment strategy if identifiable",
+  "principals": "key people if found",
+  "sources": ["source 1", "source 2"]
+}
+
+If you cannot find information, set entityType to "LLC/Unknown" and describe what you searched for.` }],
+    });
+
+    if (result.ok && result.text) {
+      let parsed = null;
+      try {
+        const jsonMatch = result.text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch (_) {}
+
+      if (parsed) {
+        parsed.entityName = entity.name;
+        setEntityResults(r => ({ ...r, [entity.name]: parsed }));
+        cacheEntity(entity.name, parsed);
+      } else {
+        setEntityResults(r => ({ ...r, [entity.name]: {
+          entityName: entity.name, entityType: "LLC/Unknown",
+          description: result.text.slice(0, 300), sources: [] } }));
+      }
+    } else {
+      setEntityResults(r => ({ ...r, [entity.name]: {
+        entityName: entity.name, entityType: "Error",
+        description: result.error || "Research failed", sources: [] } }));
+    }
+    setLoadingEntity(null);
+  };
+
+  const clearEntityCache = () => {
+    try {
+      const toRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("schuckman_entity_")) toRemove.push(key);
+      }
+      toRemove.forEach(k => localStorage.removeItem(k));
+      setEntityResults({});
+    } catch (_) {}
+  };
+
+  const TYPE_COLORS = {
+    Developer: "#16A34A", Investor: "#3D5A80", "Fund/REIT": "#7C3AED",
+    Individual: "#F5A623", "LLC/Unknown": "#9CA3AF", Error: "#DC2626",
+  };
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ background: BK, borderRadius: 10, padding: "20px 28px", marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+          flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ color: WHITE, fontWeight: 800, fontSize: 16 }}>
+              Entity Intelligence
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 4 }}>
+              AI-powered buyer & seller research · ~$0.15 per lookup · Results cached 7 days
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.1)",
+              borderRadius: 6, padding: 3 }}>
+              {["buyers","sellers"].map(f => (
+                <button key={f} onClick={() => setEntityFilter(f)}
+                  style={{ padding: "6px 16px", borderRadius: 4, border: "none", cursor: "pointer",
+                    fontSize: 12, fontWeight: 600, textTransform: "capitalize",
+                    background: entityFilter === f ? R : "transparent",
+                    color: WHITE }}>
+                  {f}
+                </button>
+              ))}
+            </div>
+            <button onClick={clearEntityCache}
+              style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.2)",
+                color: "rgba(255,255,255,0.5)", padding: "6px 14px", borderRadius: 4,
+                cursor: "pointer", fontSize: 11 }}>
+              Clear Cache
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Entity list */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {entities.slice(0, 50).map(entity => {
+          const res = entityResults[entity.name];
+          const isOpen = expandedEntity === entity.name;
+          const isLoading = loadingEntity === entity.name;
+          return (
+            <div key={entity.name}
+              style={{ background: WHITE, borderRadius: 8, overflow: "hidden",
+                border: isOpen ? `1px solid ${R}` : "1px solid #E8E8E8" }}>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px",
+                cursor: "pointer" }}
+                onClick={() => setExpandedEntity(isOpen ? null : entity.name)}>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: BK,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {entity.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: GRAY, marginTop: 2 }}>
+                    {entity.deals} deal{entity.deals > 1 ? "s" : ""} · {entity.boroughs.join(", ")}
+                    {entity.assetClasses.length > 0 && ` · ${entity.assetClasses.join(", ")}`}
+                  </div>
+                </div>
+
+                <div style={{ fontSize: 14, fontWeight: 800, color: BK, flexShrink: 0 }}>
+                  {fmt(entity.volume)}
+                </div>
+
+                {res ? (
+                  <span style={{ background: `${TYPE_COLORS[res.entityType] || "#9CA3AF"}22`,
+                    color: TYPE_COLORS[res.entityType] || "#9CA3AF",
+                    border: `1px solid ${TYPE_COLORS[res.entityType] || "#9CA3AF"}55`,
+                    padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700,
+                    whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {res.entityType}
+                  </span>
+                ) : isLoading ? (
+                  <div style={{ fontSize: 11, color: GRAY, fontStyle: "italic", flexShrink: 0 }}>
+                    Researching…
+                  </div>
+                ) : (
+                  <button onClick={(e) => { e.stopPropagation(); researchEntity(entity); }}
+                    style={{ background: LGRAY, color: BK, border: "none",
+                      padding: "6px 14px", borderRadius: 5, fontSize: 11,
+                      fontWeight: 700, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>
+                    Research
+                  </button>
+                )}
+
+                <div style={{ color: GRAY, fontSize: 16, flexShrink: 0,
+                  transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>
+                  ›
+                </div>
+              </div>
+
+              {isOpen && res && (
+                <div style={{ borderTop: "1px solid #F0F0F0", padding: "16px 18px",
+                  background: "#FAFAFA" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+                    <span style={{ background: `${TYPE_COLORS[res.entityType] || "#9CA3AF"}22`,
+                      color: TYPE_COLORS[res.entityType] || "#9CA3AF",
+                      padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
+                      {res.entityType}
+                    </span>
+                    <div style={{ fontSize: 12, color: GRAY }}>AI Research Summary</div>
+                  </div>
+
+                  <p style={{ fontSize: 13, color: BK, lineHeight: 1.65, margin: "0 0 14px" }}>
+                    {res.description}
+                  </p>
+
+                  {res.principals && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: GRAY,
+                        letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: 4 }}>
+                        Key Principals
+                      </div>
+                      <div style={{ fontSize: 12, color: BK }}>{res.principals}</div>
+                    </div>
+                  )}
+
+                  {res.strategy && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: GRAY,
+                        letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: 4 }}>
+                        Strategy
+                      </div>
+                      <div style={{ fontSize: 12, color: BK }}>{res.strategy}</div>
+                    </div>
+                  )}
+
+                  {res.knownDeals?.length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: GRAY,
+                        letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: 6 }}>
+                        Known Deals / Activity
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {res.knownDeals.map((d, i) => (
+                          <span key={i} style={{ background: "#F0F0F0", color: BK,
+                            padding: "4px 10px", borderRadius: 4, fontSize: 11 }}>
+                            {d}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {res.sources?.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: GRAY,
+                        letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: 6 }}>
+                        Sources
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {res.sources.map((s, i) => (
+                          <div key={i} style={{ fontSize: 11, color: GRAY,
+                            display: "flex", gap: 6, alignItems: "flex-start" }}>
+                            <span style={{ color: R, flexShrink: 0 }}>·</span>
+                            <span>{s}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #EBEBEB",
+                    display: "flex", gap: 8 }}>
+                    <button onClick={() => { delete entityResults[entity.name]; researchEntity(entity); }}
+                      style={{ background: "none", border: "1px solid #DDD", color: GRAY,
+                        padding: "5px 14px", borderRadius: 4, fontSize: 11, cursor: "pointer" }}>
+                      Re-research
+                    </button>
+                    <a href={`https://www.google.com/search?q=${encodeURIComponent(entity.name + " NYC real estate")}`}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{ background: "none", border: "1px solid #DDD", color: GRAY,
+                        padding: "5px 14px", borderRadius: 4, fontSize: 11, textDecoration: "none" }}>
+                      Google
+                    </a>
+                    <a href={`https://therealdeal.com/search/?q=${encodeURIComponent(entity.name)}`}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{ background: "none", border: "1px solid #DDD", color: GRAY,
+                        padding: "5px 14px", borderRadius: 4, fontSize: 11, textDecoration: "none" }}>
+                      TRD
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {entities.length > 50 && (
+        <div style={{ textAlign: "center", padding: 16, fontSize: 12, color: GRAY }}>
+          Showing top 50 of {entities.length} entities by volume
+        </div>
+      )}
     </div>
   );
 }
