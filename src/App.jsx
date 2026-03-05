@@ -288,7 +288,7 @@ function IGFooter({ mono = true }) {
     <div style={{ padding: "0 24px 16px", display: "flex", justifyContent: "space-between",
       alignItems: "center", marginTop: "auto" }}>
       <div style={{ fontSize: 8, color: mono ? "rgba(255,255,255,0.4)" : "#BBB",
-        letterSpacing: "1px" }}>SOURCE: PROPERTYSHARK</div>
+        letterSpacing: "1px" }}>SOURCE: PROPERTYSHARK · $1M+ ONLY</div>
       <div style={{ fontSize: 8, color: mono ? "rgba(255,255,255,0.4)" : "#BBB",
         letterSpacing: "1px" }}>SCHUCKMANREALTY.COM</div>
     </div>
@@ -395,8 +395,9 @@ export default function SchuckmanAnalyzer() {
               <div>
                 <div style={{ color: WHITE, fontWeight: 800, fontSize: 18 }}>{data.period}</div>
                 <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, marginTop: 2 }}>
-                  {data.filteredCount} qualifying transactions analyzed
+                  {data.filteredCount} qualifying transactions over $1M analyzed
                   {data.portfolioCount > 0 && ` · ${data.portfolioCount} portfolio${data.portfolioCount > 1 ? "s" : ""} identified`}
+                  {" · Report based on deals $1M+ only"}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 24 }}>
@@ -461,7 +462,7 @@ function InstagramView({ data, slideIdx, setSlideIdx }) {
         <div style={{ color: WHITE, fontSize: 44, fontWeight: 900, lineHeight: 1.05,
           marginBottom: 20 }}>{period?.replace(" Report","")}<br />Market<br />Report</div>
         <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, letterSpacing: "1px" }}>
-          SOURCE: PROPERTYSHARK
+          SOURCE: PROPERTYSHARK · TRANSACTIONS $1M+ ONLY
         </div>
       </div>
       <div style={{ padding: "0 40px 32px", display: "flex", justifyContent: "space-between",
@@ -668,7 +669,7 @@ function ArticleView({ data }) {
 
   const articleText = `NYC Investment Sales Market Report — ${period}
 
-The New York City investment sales market recorded ${count} qualifying transactions totaling ${fmt(totalVolume)} in ${period}, with a median transaction price of ${fmt(median)}. The data, sourced from PropertyShark, excludes single-family and two-family residential sales and has been adjusted to account for ${portfolioCount} portfolio transaction${portfolioCount !== 1 ? "s" : ""} identified during the period.
+The New York City investment sales market recorded ${count} qualifying transactions totaling ${fmt(totalVolume)} in ${period}, with a median transaction price of ${fmt(median)}. This report is based only on transactions over $1 million. The data, sourced from PropertyShark, excludes single-family and two-family residential sales and has been adjusted to account for ${portfolioCount} portfolio transaction${portfolioCount !== 1 ? "s" : ""} identified during the period.
 
 MARKET OVERVIEW
 
@@ -693,7 +694,7 @@ TOP TRANSACTIONS
 ${topDeals.map((t, i) => `${i + 1}. ${t.addr} — ${t.assetClass}${t.isPortfolio ? " (Portfolio)" : ""} — ${fmt(t.displayPrice)}`).join("\n")}
 
 ---
-Source: PropertyShark | Analysis: Schuckman Realty Inc. Investment Sales Division
+Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc. Investment Sales Division
 `;
 
   const copy = () => {
@@ -834,7 +835,7 @@ Source: PropertyShark | Analysis: Schuckman Realty Inc. Investment Sales Divisio
           display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <SchuckmanLogo size="sm" />
           <div style={{ fontSize: 10, color: "#CCC", letterSpacing: "1px" }}>
-            SOURCE: PROPERTYSHARK
+            SOURCE: PROPERTYSHARK · TRANSACTIONS $1M+ ONLY
           </div>
         </div>
       </div>
@@ -868,7 +869,7 @@ function TeamView({ data }) {
         <div>
           <SchuckmanLogo size="sm" mono={true} />
           <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, marginTop: 8,
-            letterSpacing: "1px" }}>INVESTMENT SALES · TEAM REPORT · {period?.toUpperCase()}</div>
+            letterSpacing: "1px" }}>INVESTMENT SALES · TEAM REPORT · {period?.toUpperCase()} · TRANSACTIONS $1M+ ONLY</div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {boroughs.map(b => (
@@ -1011,7 +1012,7 @@ function TeamView({ data }) {
       <div style={{ background: "#FFF8F8", border: `1px solid ${R}30`,
         borderRadius: 8, padding: "14px 20px", fontSize: 12, color: GRAY }}>
         <strong style={{ color: BK }}>Methodology: </strong>
-        1-family (A*) and 2-family (B*, S1, S2) transactions excluded.{" "}
+        Report based only on transactions over $1 million. 1-family (A*) and 2-family (B*, S1, S2) transactions excluded.{" "}
         {portfolioCount} portfolio sale{portfolioCount !== 1 ? "s" : ""} identified by matching
         buyer name + closing date — deduplicated and reported as single transactions with
         combined pricing. Development sites classified via V0/V1 building codes.
