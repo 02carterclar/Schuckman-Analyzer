@@ -661,12 +661,15 @@ function ArticleView({ data }) {
   const { period, totalVolume, count, median, byAsset, byBorough, topDeals,
     devCount, portfolioCount, bkNbds, qnsNbds } = data;
   const [copied, setCopied] = useState(false);
+  const [generatedArticle, setGeneratedArticle] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState(null);
 
   const topBorough = byBorough[0] || {};
   const topAsset = [...byAsset].sort((a, b) => b.volume - a.volume)[0] || {};
   const mfData = byAsset.find(a => a.name === "Multifamily") || {};
 
-  const articleText = `NYC Investment Sales Market Report — ${period}
+  const defaultArticleText = `NYC Investment Sales Market Report — ${period}
 
 The New York City investment sales market recorded ${count} qualifying transactions totaling ${fmt(totalVolume)} in ${period}, with a median transaction price of ${fmt(median)}. This report is based only on transactions over $1 million. The data, sourced from PropertyShark, excludes single-family and two-family residential sales and has been adjusted to account for ${portfolioCount} portfolio transaction${portfolioCount !== 1 ? "s" : ""} identified during the period.
 
@@ -696,6 +699,70 @@ ${topDeals.map((t, i) => `${i + 1}. ${t.addr} — ${t.assetClass}${t.isPortfolio
 Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc. Investment Sales Division
 `;
 
+  const articleText = generatedArticle ?? defaultArticleText;
+
+  const generateWithClaude = async () => {
+    setGenerating(true);
+    setGenerateError(null);
+    const dataBlob = [
+      `Period: ${period}`,
+      `Transactions: ${count} (over $1M only). Portfolio deals identified: ${portfolioCount}.`,
+      `Total volume: ${fmt(totalVolume)}. Median price: ${fmt(median)}. Dev sites: ${devCount}.`,
+      "",
+      "Boroughs:",
+      ...byBorough.map(b => `  ${b.name}: ${b.count} deals, ${fmt(b.volume)}`),
+      "",
+      "Asset classes:",
+      ...byAsset.map(a => `  ${a.name}: ${a.count} transactions, ${fmt(a.volume)}`),
+      "",
+      "Top Brooklyn neighborhoods:",
+      ...(bkNbds.slice(0, 6).map((n, i) => `  ${i + 1}. ${n.name} — ${n.count} deals, ${fmt(n.volume)}`) || ["  (none)"]),
+      "",
+      "Top Queens neighborhoods:",
+      ...(qnsNbds.slice(0, 6).map((n, i) => `  ${i + 1}. ${n.name} — ${n.count} deals, ${fmt(n.volume)}`) || ["  (none)"]),
+      "",
+      "Top transactions:",
+      ...topDeals.slice(0, 5).map((t, i) => `  ${i + 1}. ${t.addr} — ${t.assetClass}${t.isPortfolio ? " (Portfolio)" : ""} — ${fmt(t.displayPrice)}`),
+    ].join("\n");
+
+    const prompt = `Write a concise, data-forward NYC Investment Sales Market Report article. Use ONLY the data below. Do not invent any numbers or facts. The report is based only on transactions over $1 million. Source: PropertyShark. Exclude single-family and two-family residential sales; portfolio deals are deduplicated.
+
+Requirements: Keep the article concise (under 350 words). Lead with the key numbers (volume, transaction count, median). Include market overview, asset class and borough breakdown, top neighborhoods (Brooklyn/Queens), and top transactions. End with exactly: "Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc. Investment Sales Division". Output plain text only, no markdown.
+
+DATA:
+${dataBlob}`;
+
+    try {
+      const resp = await fetch("/api/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 2048,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) {
+        setGenerateError(json.error?.message || `HTTP ${resp.status}`);
+        setGenerating(false);
+        return;
+      }
+      let raw = "";
+      for (const block of (json.content || [])) {
+        if (block.type === "text") raw = block.text;
+      }
+      if (raw && raw.trim()) {
+        setGeneratedArticle(raw.trim());
+      } else {
+        setGenerateError("No text in response.");
+      }
+    } catch (err) {
+      setGenerateError(err.message || "Request failed.");
+    }
+    setGenerating(false);
+  };
+
   const copy = () => {
     navigator.clipboard.writeText(articleText);
     setCopied(true);
@@ -709,16 +776,31 @@ Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc.
         <div>
           <div style={{ fontWeight: 800, fontSize: 16, color: BK }}>Website Article</div>
           <div style={{ fontSize: 12, color: GRAY, marginTop: 2 }}>
-            Data-forward narrative · Copy and paste into your CMS
+            Data-forward narrative · Generate with Claude or copy template
           </div>
         </div>
-        <button onClick={copy}
-          style={{ background: copied ? "#22C55E" : R, color: WHITE, border: "none",
-            padding: "10px 24px", borderRadius: 6, fontSize: 13, fontWeight: 700,
-            cursor: "pointer" }}>
-          {copied ? "✓ Copied!" : "Copy Article Text"}
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={generateWithClaude} disabled={generating}
+            style={{ background: generating ? GRAY : BK, color: WHITE, border: "none",
+              padding: "10px 24px", borderRadius: 6, fontSize: 13, fontWeight: 700,
+              cursor: generating ? "not-allowed" : "pointer" }}>
+            {generating ? "Generating…" : "Generate with Claude"}
+          </button>
+          <button onClick={copy}
+            style={{ background: copied ? "#22C55E" : R, color: WHITE, border: "none",
+              padding: "10px 24px", borderRadius: 6, fontSize: 13, fontWeight: 700,
+              cursor: "pointer" }}>
+            {copied ? "✓ Copied!" : "Copy Article Text"}
+          </button>
+        </div>
       </div>
+
+      {generateError && (
+        <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8,
+          padding: "12px 16px", marginBottom: 20, fontSize: 13, color: "#B91C1C" }}>
+          {generateError}
+        </div>
+      )}
 
       {/* Preview */}
       <div style={{ background: "#FAFAFA", border: "1px solid #E8E8E8", borderRadius: 8,
@@ -733,10 +815,16 @@ Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc.
           <div style={{ fontSize: 16, color: R, fontWeight: 700 }}>{period}</div>
         </div>
 
+        {generatedArticle ? (
+          <div style={{ fontSize: 15, lineHeight: 1.7, color: "#333", whiteSpace: "pre-wrap", marginBottom: 32 }}>
+            {generatedArticle}
+          </div>
+        ) : (
+          <>
         <p style={{ fontSize: 15, lineHeight: 1.75, color: "#333", marginBottom: 24 }}>
           The New York City investment sales market recorded <strong>{count}</strong> qualifying transactions
           totaling <strong>{fmt(totalVolume)}</strong> in {period}, with a median transaction price of{" "}
-          <strong>{fmt(median)}</strong>. The data, sourced from PropertyShark, excludes single-family and
+          <strong>{fmt(median)}</strong>. This report is based only on transactions over $1 million. The data, sourced from PropertyShark, excludes single-family and
           two-family residential sales and has been adjusted to account for{" "}
           <strong>{portfolioCount} portfolio transaction{portfolioCount !== 1 ? "s" : ""}</strong> identified
           during the period.
@@ -829,6 +917,8 @@ Source: PropertyShark (transactions $1M+ only) | Analysis: Schuckman Realty Inc.
             </div>
           </div>
         ))}
+          </>
+        )}
 
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid #EEE",
           display: "flex", justifyContent: "space-between", alignItems: "center" }}>
