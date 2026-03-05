@@ -1154,13 +1154,13 @@ Confidence rules — be strict:
       } else {
         const noText = !raw || raw.trim().length === 0;
         const summary = noText
-          ? "No response text from Claude. If every research shows this, enable web search for your API key in Anthropic Console (Settings → Privacy), or the model may have hit a tool-use turn without returning final JSON."
+          ? "No response text from Claude. Enable web search for your API key in Anthropic Console (Settings → Privacy), then re-research."
           : raw.slice(0, 280) + " (JSON could not be parsed — re-research to get a classification.)";
-        setResults(r => ({ ...r, [key]: { status: "done", confidence: "Error",
+        setResults(r => ({ ...r, [key]: { status: "done", confidence: "Possible Dev",
           summary, signals: [], sources: [] } }));
       }
     } catch (err) {
-      setResults(r => ({ ...r, [key]: { status: "error", confidence: "Error",
+      setResults(r => ({ ...r, [key]: { status: "error", confidence: "Possible Dev",
         summary: "Research failed: " + err.message, signals: [], sources: [] } }));
     }
     setQueue(q => q.filter(k => k !== key));
