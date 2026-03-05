@@ -1427,6 +1427,23 @@ Confidence definitions:
   >
     📰 TRD →
   </a>
+
+  <a
+    href={"https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(txn.addr)}
+    target="_blank"
+    rel="noopener noreferrer"
+    style={{
+      background: "none",
+      border: "1px solid #DDD",
+      color: GRAY,
+      padding: "5px 14px",
+      borderRadius: 4,
+      fontSize: 11,
+      textDecoration: "none",
+    }}
+  >
+    🗺 Maps →
+  </a>
 </div>
                 </div>
               )}
