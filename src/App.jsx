@@ -1334,69 +1334,97 @@ Confidence definitions:
                     </div>
                   )}
 
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #EBEBEB",
-                    display: "flex", gap: 8 }}>
-                    <button onClick={() => researchDeal(txn)}
-                      style={{ background: "none", border: `1px solid #DDD`,
-                        color: GRAY, padding: "5px 14px", borderRadius: 4,
-                        fontSize: 11, cursor: "pointer" }}>
-                      ↺ Re-research
-                    </button>
-                    <a href={`https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?boro=${txn.borough === "Manhattan" ? 1 : txn.borough === "Bronx" ? 2 : txn.borough === "Brooklyn" ? 3 : txn.borough === "Queens" ? 4 : 5}&houseno=${encodeURIComponent(txn.addr.split(" ")[0])}&street=${encodeURIComponent(txn.addr.split(",")[0].replace(/^\d+\s+/, ""))}`}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{ background: "none", border: `1px solid #DDD`,
-                        color: GRAY, padding: "5px 14px", borderRadius: 4,
-                        fontSize: 11, cursor: "pointer", textDecoration: "none" }}>
-                      🏛 NYC DOB →
-                    </a>
-  href={"https://yimby.com/?s=" + encodeURIComponent(txn.addr.split(",")[0])}
-  target="_blank"
-  rel="noopener noreferrer"
+                 <div
   style={{
-    background: "none",
-    border: `1px solid #DDD`,
-    color: GRAY,
-    padding: "5px 14px",
-    borderRadius: 4,
-    fontSize: 11,
-    cursor: "pointer",
-    textDecoration: "none",
+    marginTop: 14,
+    paddingTop: 12,
+    borderTop: "1px solid #EBEBEB",
+    display: "flex",
+    gap: 8,
   }}
 >
-  🏗 YIMBY →
-</a>
-                  <a href={"https://therealdeal.com/search/?q=" + encodeURIComponent(txn.addr.split(",")[0]) + "+" + encodeURIComponent(txn.borough)}
-  target="_blank" rel="noopener noreferrer"
-  style={{ background:"none", border:"1px solid #DDD", color:GRAY,
-    padding:"5px 14px", borderRadius:4, fontSize:11, textDecoration:"none" }}>
-  📰 TRD →
-</a>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+  <button
+    onClick={() => researchDeal(txn)}
+    style={{
+      background: "none",
+      border: `1px solid #DDD`,
+      color: GRAY,
+      padding: "5px 14px",
+      borderRadius: 4,
+      fontSize: 11,
+      cursor: "pointer",
+    }}
+  >
+    ↺ Re-research
+  </button>
 
-      {shown.length === 0 && (
-        <div style={{ background: WHITE, borderRadius: 8, padding: "48px 32px",
-          textAlign: "center" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>🔎</div>
-          <div style={{ fontSize: 14, color: GRAY }}>No deals in this filter category yet.</div>
-        </div>
-      )}
+  <a
+    href={`https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?boro=${
+      txn.borough === "Manhattan"
+        ? 1
+        : txn.borough === "Bronx"
+        ? 2
+        : txn.borough === "Brooklyn"
+        ? 3
+        : txn.borough === "Queens"
+        ? 4
+        : 5
+    }&houseno=${encodeURIComponent(txn.addr.split(" ")[0])}&street=${encodeURIComponent(
+      txn.addr.split(",")[0].replace(/^\d+\s+/, "")
+    )}`}
+    target="_blank"
+    rel="noopener noreferrer"
+    style={{
+      background: "none",
+      border: `1px solid #DDD`,
+      color: GRAY,
+      padding: "5px 14px",
+      borderRadius: 4,
+      fontSize: 11,
+      cursor: "pointer",
+      textDecoration: "none",
+    }}
+  >
+    🏛 NYC DOB →
+  </a>
 
-      <div style={{ marginTop: 16, background: "#FFF8F8",
-        border: `1px solid ${R}30`, borderRadius: 8, padding: "12px 18px",
-        fontSize: 11, color: GRAY, lineHeight: 1.6 }}>
-        <strong style={{ color: BK }}>How it works: </strong>
-        Each deal is researched live using web search across NYC DOB permits, YIMBY NY,
-        The Real Deal, Crain's, Bisnow, and broker/developer press.
-        Confidence is assigned based on hard evidence found (permits filed, news articles,
-        known developer buyer) vs. signals only (zoning, price-per-SF, vacant land classification).
-        Results can be re-researched at any time.
-      </div>
-    </div>
-  );
-}
+  <a
+    href={"https://yimby.com/?s=" + encodeURIComponent(txn.addr.split(",")[0])}
+    target="_blank"
+    rel="noopener noreferrer"
+    style={{
+      background: "none",
+      border: `1px solid #DDD`,
+      color: GRAY,
+      padding: "5px 14px",
+      borderRadius: 4,
+      fontSize: 11,
+      cursor: "pointer",
+      textDecoration: "none",
+    }}
+  >
+    🏗 YIMBY →
+  </a>
+
+  <a
+    href={
+      "https://therealdeal.com/search/?q=" +
+      encodeURIComponent(txn.addr.split(",")[0]) +
+      "+" +
+      encodeURIComponent(txn.borough)
+    }
+    target="_blank"
+    rel="noopener noreferrer"
+    style={{
+      background: "none",
+      border: "1px solid #DDD",
+      color: GRAY,
+      padding: "5px 14px",
+      borderRadius: 4,
+      fontSize: 11,
+      textDecoration: "none",
+    }}
+  >
+    📰 TRD →
+  </a>
+</div>
