@@ -1028,6 +1028,7 @@ const CONF_COLORS = {
   "Not Dev":       "#9CA3AF",
   "Researching…":  "#6B6B6B",
   "Pending":       "#D1D5DB",
+  "Error":         "#DC2626",
 };
 
 function ConfBadge({ label }) {
@@ -1109,12 +1110,26 @@ Confidence rules — be strict:
   body: JSON.stringify({
     model: "claude-sonnet-4-20250514",
     max_tokens: 4096,
-    tools: [{ type: "web_search_20250305", name: "web_search" }],
+    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
     messages: [{ role: "user", content: prompt }],
   }),
 });
 
       const json = await resp.json();
+
+      // Surface API errors instead of defaulting to "Possible Dev"
+      if (!resp.ok) {
+        const msg = json.error?.message || json.message || `HTTP ${resp.status}`;
+        const hint = resp.status === 403
+          ? " Web search may need to be enabled for your API key in the Anthropic console."
+          : resp.status === 401
+          ? " Check ANTHROPIC_API_KEY."
+          : "";
+        setResults(r => ({ ...r, [key]: { status: "done", confidence: "Error",
+          summary: "API error: " + msg + hint, signals: [], sources: [] } }));
+        setQueue(q => q.filter(k => k !== key));
+        return;
+      }
 
       // Extract the final text block (after tool use rounds)
       let raw = "";
@@ -1137,13 +1152,16 @@ Confidence rules — be strict:
         if (conf) parsed.confidence = conf;
         setResults(r => ({ ...r, [key]: { status: "done", ...parsed } }));
       } else {
-        setResults(r => ({ ...r, [key]: { status: "done", confidence: "Possible Dev",
-          summary: raw ? raw.slice(0, 280) + " (JSON could not be parsed — re-research to get a classification.)" : "No response from research.", signals: [], sources: [] } }));
+        const noText = !raw || raw.trim().length === 0;
+        const summary = noText
+          ? "No response text from Claude. If every research shows this, enable web search for your API key in Anthropic Console (Settings → Privacy), or the model may have hit a tool-use turn without returning final JSON."
+          : raw.slice(0, 280) + " (JSON could not be parsed — re-research to get a classification.)";
+        setResults(r => ({ ...r, [key]: { status: "done", confidence: "Error",
+          summary, signals: [], sources: [] } }));
       }
     } catch (err) {
-      setResults(r => ({ ...r, [key]: { status: "error",
-        confidence: "Possible Dev", summary: "Research failed: " + err.message,
-        signals: [], sources: [] } }));
+      setResults(r => ({ ...r, [key]: { status: "error", confidence: "Error",
+        summary: "Research failed: " + err.message, signals: [], sources: [] } }));
     }
     setQueue(q => q.filter(k => k !== key));
   };
@@ -1159,10 +1177,11 @@ Confidence rules — be strict:
     setRunningAll(false);
   };
 
-  const filterOpts = ["All","Confirmed Dev","Likely Dev","Possible Dev","Not Dev","Pending"];
+  const filterOpts = ["All","Confirmed Dev","Likely Dev","Possible Dev","Not Dev","Pending","Error"];
   const shown = candidates.filter(t => {
     if (filter === "All") return true;
     if (filter === "Pending") return !results[t.addr];
+    if (filter === "Error") return results[t.addr]?.confidence === "Error";
     return results[t.addr]?.confidence === filter;
   });
 
