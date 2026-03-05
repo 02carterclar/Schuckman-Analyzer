@@ -229,6 +229,7 @@ function SchuckmanLogo({ size = "md", mono = false }) {
     lg: { fs: 42, sub: 12, gap: 4 }
   };
   const s = sizes[size];
+  const subColor = mono ? WHITE : BK;
   return (
     <div style={{ display: "inline-flex", flexDirection: "column", gap: s.gap, lineHeight: 1, alignItems: "center" }}>
       <div style={{ fontFamily: "'Arial Black', 'Franklin Gothic Heavy', 'Impact', sans-serif",
@@ -236,7 +237,7 @@ function SchuckmanLogo({ size = "md", mono = false }) {
         SCHUCKMAN
       </div>
       <div style={{ fontFamily: "'Arial', sans-serif", fontWeight: 400, fontSize: s.sub,
-        color: R, letterSpacing: "5px", lineHeight: 1, textAlign: "center" }}>
+        color: subColor, letterSpacing: "5px", lineHeight: 1, textAlign: "center" }}>
         REALTY INC.
       </div>
     </div>
