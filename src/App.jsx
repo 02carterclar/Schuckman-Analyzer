@@ -1071,7 +1071,9 @@ function DevIntelView({ data }) {
     const cleanAddr = txn.addr.replace(/,\s*\d{5}/, "").trim();
     const bbl = txn.bbl || "";
 
-    const prompt = `You are a NYC real estate analyst. Research this property sale and determine if it was purchased as a DEVELOPMENT SITE (i.e., buyer intends to demolish and build new, or the vacant land itself was the value). 
+    const prompt = `You are a NYC real estate analyst. Determine if this property was purchased as a DEVELOPMENT SITE (demolish and build new, or vacant land as the main value).
+
+IMPORTANT: You MUST use web search at least 2–3 times before answering. Search for this specific address, the buyer name, and DOB/permits. Do not guess or default to "Possible Dev" without doing real searches.
 
 Property: ${cleanAddr}
 Sale Price: ${fmt(txn.price)}
@@ -1079,27 +1081,26 @@ Building Class: ${txn.bc || "Unknown"}
 Zoning: ${txn.zoning || "Unknown"}
 Current Asset Class: ${txn.assetClass}
 Borough: ${txn.borough}
+Buyer: ${txn.buyer || "Unknown"}
 
-Search for:
-1. NYC DOB (Department of Buildings) new building permits or demolition permits filed at this address after the sale
-2. YIMBY NY articles mentioning this address or developer
-3. Any broker press releases, CoStar, The Real Deal, Bisnow, or Crain's articles about this sale
-4. The buyer's name "${txn.buyer || ""}" — are they a known developer?
-5. Zoning analysis — does the zoning (${txn.zoning || "unknown"}) suggest development potential?
+Required searches (perform these):
+1. NYC DOB — new building or demolition permits at this address after the sale (search "DOB [address]" or "NYC BIS [address]")
+2. Address + development — e.g. "${cleanAddr} development" or "${cleanAddr} new building" on YIMBY, The Real Deal, Bisnow
+3. Buyer "${txn.buyer || "Unknown"}" — are they a known developer? Search "[buyer name] developer NYC"
 
-Based on your research, return ONLY a JSON object with this exact structure:
+After researching, return ONLY this JSON (no other text):
 {
   "confidence": "Confirmed Dev" | "Likely Dev" | "Possible Dev" | "Not Dev",
-  "summary": "2-3 sentence plain English summary of what you found",
-  "signals": ["signal 1", "signal 2", ...],
-  "sources": ["source description 1", "source description 2", ...]
+  "summary": "2-3 sentence summary of what you actually found in your searches",
+  "signals": ["specific finding 1", "specific finding 2", ...],
+  "sources": ["source 1", "source 2", ...]
 }
 
-Confidence definitions:
-- "Confirmed Dev": DOB new building permit filed, demolition permit pulled, or major news article confirms development plans
-- "Likely Dev": Buyer is a known developer, vacant land sold, OR strong zoning/price signals with supporting context
-- "Possible Dev": Some development signals but no hard confirmation
-- "Not Dev": Evidence suggests investment/repositioning purchase, not development`;
+Confidence rules — be strict:
+- "Confirmed Dev": You found a DOB new-building or demolition permit, or a clear news article stating development plans at this address.
+- "Likely Dev": Vacant land (V0/V1) or you found strong evidence (e.g. buyer is a known developer with a track record, or article strongly implies dev plans).
+- "Possible Dev": You found some relevant signals (e.g. zoning supports dev, or one weak mention) but could not confirm. Use only when you have real search results that hint at dev.
+- "Not Dev": You found no permits, no development news, and no developer profile for the buyer; or you found evidence it is a hold/rental/repositioning play. When in doubt after searching, prefer "Not Dev" over "Possible Dev".`;
 
     try {
      const resp = await fetch("/api/research", {
@@ -1107,7 +1108,7 @@ Confidence definitions:
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 1000,
+    max_tokens: 4096,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
     messages: [{ role: "user", content: prompt }],
   }),
@@ -1129,10 +1130,15 @@ Confidence definitions:
       } catch (_) {}
 
       if (parsed) {
+        // Normalize confidence to exact label (model might return slight variants)
+        const conf = parsed.confidence && ["Confirmed Dev","Likely Dev","Possible Dev","Not Dev"].find(
+          c => c.toLowerCase() === String(parsed.confidence).toLowerCase()
+        );
+        if (conf) parsed.confidence = conf;
         setResults(r => ({ ...r, [key]: { status: "done", ...parsed } }));
       } else {
         setResults(r => ({ ...r, [key]: { status: "done", confidence: "Possible Dev",
-          summary: raw.slice(0, 300), signals: [], sources: [] } }));
+          summary: raw ? raw.slice(0, 280) + " (JSON could not be parsed — re-research to get a classification.)" : "No response from research.", signals: [], sources: [] } }));
       }
     } catch (err) {
       setResults(r => ({ ...r, [key]: { status: "error",
