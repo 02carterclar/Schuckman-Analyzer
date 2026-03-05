@@ -68,7 +68,7 @@ function classifyAsset(bc) {
   // MULTIFAMILY — pure residential 3+ units
   if (["C0","C1","C2","C3","C4","C5","C6"].includes(code)) return "Multifamily";
   // S3-S5 = 3 to 6-family with one store (res-dominant)
-  if (["S3","S4","S5"].includes(code)) return "Multifamily";
+  if (["S3","S4","S5"].includes(code)) return "Mixed-Use";
 
   // MIXED-USE — residential with meaningful commercial component
   if (code === "C7" || code === "S9") return "Mixed-Use";
